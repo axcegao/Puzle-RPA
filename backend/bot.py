@@ -7,6 +7,7 @@ from datetime import datetime
 
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.offline import get_plotlyjs
 
 import calculations as calc
 import db
@@ -117,6 +118,7 @@ class Session:
         self.calc_history = []
         self.pending_clarify = False
         self.name = None
+        self._fact_end = None
 
     def set_source(self, source: str) -> None:
         if source == self.source:
@@ -124,13 +126,27 @@ class Session:
         self.source = source
         self.base = db.get_sales_with_plan() if source == "sales" else db.get_discounts()
         self.calc_history = []
+        self._fact_end = None
         self.config.update({"dimension": None, "filters": {}, "sort_by": None, "top_n": None})
+
+    def fact_end(self) -> pd.Timestamp:
+        if self._fact_end is None:
+            metric = "fact_amount" if "fact_amount" in self.base.columns else "discount_amount"
+            mask = self.base[metric] > 0
+            last = self.base.loc[mask, "period"].max()
+            if pd.isna(last):
+                last = self.base["period"].max()
+            self._fact_end = last + pd.offsets.MonthEnd(0)
+        return self._fact_end
 
     def view(self) -> pd.DataFrame:
         d = self.base
         bounds = period_bounds(self.config.get("period"))
         if bounds:
             start, end = bounds
+            if self.config["period"]["type"] in ("last_year", "last_years",
+                                                 "last_quarter", "last_month"):
+                end = min(end, self.fact_end())
             d = d[(d["period"] >= start) & (d["period"] <= end)]
         for col, values in self.config.get("filters", {}).items():
             if col in d.columns and values:
@@ -448,7 +464,7 @@ def h_export(sess: Session, it: nlu.Intent) -> dict:
         v.to_csv(path, index=False, encoding="utf-8-sig")
     else:
         parts = ["<html><head><meta charset='utf-8'>",
-                 "<script src='https://cdn.plot.ly/plotly-2.35.2.min.js'></script></head><body>",
+                 "<script>" + get_plotlyjs() + "</script></head><body>",
                  f"<h2>{sess.name or 'Дашборд'}</h2>",
                  "<table border='1' cellpadding='6'><tr>"]
         for kpi in compute_kpis(v, sess.config):
