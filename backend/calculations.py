@@ -175,7 +175,10 @@ _FUNCS = {"abs": np.abs, "round": np.round, "minimum": np.minimum, "maximum": np
 
 def safe_eval_formula(df: pd.DataFrame, formula: str) -> pd.Series:
     """Безопасный разбор арифметической формулы над колонками таблицы."""
-    node = ast.parse(formula, mode="eval").body
+    try:
+        node = ast.parse(formula, mode="eval").body
+    except SyntaxError as exc:
+        raise CalcError(f"Не удалось разобрать формулу: {formula}") from exc
 
     def ev(n):
         if isinstance(n, ast.Constant):
@@ -211,7 +214,8 @@ def normalize_query(text: str) -> tuple[str, str]:
     t = text.lower()
     m = re.search(r"формула\s*[:\-]?\s*(.+)", t)
     if m:
-        return "formula", m.group(1).strip()
+        expr = re.match(r"[a-z0-9_+\-*/%().,\s]+", m.group(1))
+        return "formula", expr.group(0).strip() if expr else ""
     if "отклонени" in t or ("разниц" in t and "план" in t):
         if "%" in text or "процент" in t:
             return "deviation_pct", ""
@@ -238,6 +242,8 @@ def apply_preset(df: pd.DataFrame, query: str, dimension: str | None = None):
         return None
     dim = dimension or infer_dimension(df)
     if key == "formula":
+        if not formula:
+            return None
         d = df.copy()
         name = "formula_" + re.sub(r"[^a-zа-яё0-9]+", "_", formula)[:24].strip("_")
         d[name] = safe_eval_formula(d, formula)
