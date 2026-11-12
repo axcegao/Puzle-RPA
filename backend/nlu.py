@@ -23,12 +23,12 @@ INTENT_RULES: list[tuple[str, tuple[str, ...]]] = [
     ("discounts", ("скидк",)),
 ]
 
-DIM_RULES: list[tuple[str, tuple[str, ...]]] = [
-    ("category", ("категори",)),
-    ("region_name", ("регион",)),
-    ("client_name", ("клиент",)),
-    ("outlet_name", ("точк", "магазин")),
-    ("product_name", ("продукт", "товар")),
+DIM_PATTERNS: list[tuple[str, str]] = [
+    ("category", r"(?:по|на)\s+категори|разрез\w*\s+(?:на\s+)?категори"),
+    ("region_name", r"(?:по|на)\s+регион|разрез\w*\s+(?:на\s+)?регион"),
+    ("client_name", r"(?:по|на)\s+клиент|разрез\w*\s+(?:на\s+)?клиент"),
+    ("outlet_name", r"(?:по|на)\s+(?:торгов\w*\s+)?точк|разрез\w*\s+(?:на\s+)?(?:торгов\w*\s+)?точк|(?:по|на)\s+магазин"),
+    ("product_name", r"(?:по|на)\s+(?:продукт|товар)|разрез\w*\s+(?:на\s+)?(?:продукт|товар)"),
 ]
 
 SORT_RULES: list[tuple[str, tuple[str, ...]]] = [
@@ -122,8 +122,8 @@ def parse(text: str) -> Intent:
         if any(k in t for k in keys):
             it.intent = intent
             break
-    for dim, keys in DIM_RULES:
-        if any(k in t for k in keys):
+    for dim, pattern in DIM_PATTERNS:
+        if re.search(pattern, t):
             it.dimension = dim
             break
     if "поквартальн" in t or "по кварталам" in t:
@@ -137,10 +137,11 @@ def parse(text: str) -> Intent:
     m = re.search(r"топ[- ]?(\d+)", t) or re.search(r"первы[ех] (\d+)", t)
     if m:
         it.top_n = int(m.group(1))
-    for col, keys in SORT_RULES:
-        if any(k in t for k in keys):
-            it.sort_by = col
-            break
+    if it.intent == "rebuild_chart" or "отсортируй" in t or "сортировк" in t or it.top_n:
+        for col, keys in SORT_RULES:
+            if any(k in t for k in keys):
+                it.sort_by = col
+                break
     m = re.search(r"«([^»]+)»", text) or re.search(r'"([^"]+)"', text) \
         or re.search(r"под названием\s+([^.,!]+)", text)
     if m:
