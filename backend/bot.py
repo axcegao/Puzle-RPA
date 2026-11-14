@@ -495,8 +495,22 @@ def h_delete(sess: Session, it: nlu.Intent) -> dict:
 
 
 def h_rename(sess: Session, it: nlu.Intent) -> dict:
-    return reply(sess, "text", "Переименование: напишите «переименуй дашборд «Старое имя» в «Новое имя»». "
-                               "Пока поддерживается удаление и повторное сохранение под новым именем.")
+    store = _load_store()
+    state = _find_state(store, it.dashboard_name or "")
+    if not state:
+        return reply(sess, "text", f"Дашборд «{it.dashboard_name}» не найден.")
+    new_name = (it.new_name or "").strip()
+    if not new_name:
+        return reply(sess, "text", "Укажите новое имя в кавычках: переименуй дашборд «Старое» в «Новое».")
+    if any(s["name"].lower() == new_name.lower() and s["id"] != state["id"] for s in store):
+        return reply(sess, "text", f"Имя «{new_name}» уже занято другим дашбордом.")
+    old_name = state["name"]
+    state["name"] = new_name
+    state["updated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+    _save_store(store)
+    if sess.name == old_name:
+        sess.name = new_name
+    return reply(sess, "text", f"Дашборд «{old_name}» переименован в «{new_name}».")
 
 
 def h_export(sess: Session, it: nlu.Intent) -> dict:

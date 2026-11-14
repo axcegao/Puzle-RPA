@@ -62,6 +62,8 @@ class Intent:
     dashboard_name: str | None = None
     export_format: str | None = None
     text: str = ""
+    dashboard_name: str | None = None
+    new_name: str | None = None
 
 
 def set_known_values(mapping: dict[str, list[str]]) -> None:
@@ -144,10 +146,15 @@ def parse(text: str) -> Intent:
             if any(k in t for k in keys):
                 it.sort_by = col
                 break
-    m = re.search(r"«([^»]+)»", text) or re.search(r'"([^"]+)"', text) \
-        or re.search(r"под названием\s+([^.,!]+)", text)
-    if m:
-        it.dashboard_name = m.group(1).strip()
+    names = re.findall(r"«([^»]+)»", text) or re.findall(r'"([^"]+)"', text)
+    if names:
+        it.dashboard_name = names[0].strip()
+        if len(names) > 1:
+            it.new_name = names[1].strip()
+    else:
+        m = re.search(r"под названием\s+([^.,!]+)", text)
+        if m:
+            it.dashboard_name = m.group(1).strip()
     if "csv" in t:
         it.export_format = "csv"
     elif "excel" in t or "xlsx" in t:
