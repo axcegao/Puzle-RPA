@@ -114,7 +114,7 @@ class Session:
         self.source = "sales"
         self.base = db.get_sales_with_plan()
         self.config = {"dimension": None, "granularity": "month", "period": None,
-                       "filters": {}, "sort_by": None, "top_n": None}
+                       "filters": {}, "sort_by": None, "top_n": None, "metric": None}
         self.calc_history = []
         self.pending_clarify = False
         self.name = None
@@ -127,7 +127,8 @@ class Session:
         self.base = db.get_sales_with_plan() if source == "sales" else db.get_discounts()
         self.calc_history = []
         self._fact_end = None
-        self.config.update({"dimension": None, "filters": {}, "sort_by": None, "top_n": None})
+        self.config.update({"dimension": None, "filters": {}, "sort_by": None,
+                            "top_n": None, "metric": None})
 
     def fact_end(self) -> pd.Timestamp:
         if self._fact_end is None:
@@ -169,10 +170,13 @@ def _totals(v: pd.DataFrame, dim: str) -> pd.DataFrame:
 
 
 def _layout(fig: go.Figure, title: str) -> go.Figure:
-    fig.update_layout(title=title, template="plotly_white",
+    fig.update_layout(title=dict(text=title, x=0.02, y=0.97, xanchor="left", yanchor="top"),
+                      template="plotly_white",
                       font=dict(family="Segoe UI, Arial", size=12),
-                      margin=dict(l=50, r=20, t=50, b=40),
-                      legend=dict(orientation="h", y=-0.25))
+                      margin=dict(l=50, r=30, t=60, b=40),
+                      legend=dict(orientation="h", y=-0.25),
+                      modebar=dict(orientation="v", bgcolor="rgba(255,255,255,0.7)",
+                                   color="#64748b", activecolor="#2563eb"))
     return fig
 
 
@@ -180,6 +184,9 @@ def build_charts(v: pd.DataFrame, cfg: dict) -> list:
     dim = cfg["dimension"]
     has_plan = "plan_amount" in v.columns
     main = "fact_amount" if has_plan else "discount_amount"
+    sel = cfg.get("metric") or main
+    if sel not in v.columns:
+        sel = main
     totals = _totals(v, dim)
     sort_col = cfg.get("sort_by") or main
     if sort_col not in totals.columns:
@@ -191,10 +198,26 @@ def build_charts(v: pd.DataFrame, cfg: dict) -> list:
 
     fig = go.Figure()
     t = totals[totals[dim].isin(cats)]
-    fig.add_bar(x=t[dim], y=t[main], name="Факт" if has_plan else "Скидки",
-                marker_color=PALETTE[0])
-    if has_plan:
-        fig.add_bar(x=t[dim], y=t["plan_amount"], name="План", marker_color=PALETTE[1])
+    names = t[dim].astype(str).tolist()
+    short = [n if len(n) <= 32 else n[:31] + "…" for n in names]
+    horizontal = dim in ("outlet_name", "product_name", "client_name")
+    if horizontal:
+        fig.add_bar(y=short, x=t[main], orientation="h",
+                    name="Факт" if has_plan else "Скидки",
+                    marker_color=PALETTE[0], customdata=names)
+        if has_plan:
+            fig.add_bar(y=short, x=t["plan_amount"], orientation="h", name="План",
+                        marker_color=PALETTE[1], customdata=names)
+        fig.update_traces(hovertemplate="%{customdata}<br>%{x:,.0f} ₽")
+        fig.update_yaxes(autorange="reversed", automargin=True)
+    else:
+        fig.add_bar(x=short, y=t[main], name="Факт" if has_plan else "Скидки",
+                    marker_color=PALETTE[0], customdata=names)
+        if has_plan:
+            fig.add_bar(x=short, y=t["plan_amount"], name="План",
+                        marker_color=PALETTE[1], customdata=names)
+        fig.update_traces(hovertemplate="%{customdata}<br>%{y:,.0f} ₽")
+        fig.update_xaxes(tickangle=-35, automargin=True)
     charts.append(_layout(fig, f"План и факт по разрезам: {DIM_LABELS.get(dim, dim)}"))
 
     per_cols = [main] + (["plan_amount"] if has_plan else [])
@@ -206,27 +229,42 @@ def build_charts(v: pd.DataFrame, cfg: dict) -> list:
     if has_plan:
         fig.add_scatter(x=per["period_label"], y=per["plan_amount"], mode="lines+markers",
                         name="План", line=dict(color=PALETTE[1]))
-    charts.append(_layout(fig, "Динамика по периодам"))
+    fig.update_traces(hovertemplate="%{x}<br>%{y:,.0f} ₽")
+    charts.append(_layout(fig, "Динамика по периодам").update_xaxes(type="category"))
 
-    pie_src = totals.head(8)
-    labels = pie_src[dim].tolist()
-    values = pie_src[main].tolist()
-    rest = totals[main].sum() - sum(values)
-    if rest > 0:
-        labels.append("Прочие")
-        values.append(rest)
-    fig = go.Figure(go.Pie(labels=labels, values=values, marker_colors=PALETTE))
-    charts.append(_layout(fig, "Структура объёма"))
+    if len(totals) > 12:
+        top = totals.head(8)
+        names = top[dim].astype(str).tolist()
+        short = [n if len(n) <= 32 else n[:31] + "…" for n in names]
+        fig = go.Figure(go.Bar(y=short, x=top[main], orientation="h",
+                               marker_color=PALETTE[0], customdata=names))
+        fig.update_traces(hovertemplate="%{customdata}<br>%{x:,.0f} ₽")
+        fig.update_yaxes(autorange="reversed", automargin=True)
+        charts.append(_layout(fig, "Структура объёма: топ-8"))
+    else:
+        pie_src = totals.head(8)
+        labels = pie_src[dim].tolist()
+        values = pie_src[main].tolist()
+        rest = totals[main].sum() - sum(values)
+        if rest > 0:
+            labels.append("Прочие")
+            values.append(rest)
+        fig = go.Figure(go.Pie(labels=labels, values=values, marker_colors=PALETTE, hole=0.45))
+        charts.append(_layout(fig, "Структура объёма"))
 
     top5 = totals[dim].head(5).tolist()
+    aggfunc = "sum" if sel in ADDITIVE else "mean"
     pivot = v[v[dim].isin(top5)].pivot_table(index="period_label", columns=dim,
-                                             values=main, aggfunc="sum")
+                                             values=sel, aggfunc=aggfunc)
     pivot = pivot.sort_index()
     fig = go.Figure()
     for i, col in enumerate(pivot.columns):
         fig.add_scatter(x=pivot.index.tolist(), y=pivot[col].tolist(), mode="lines+markers",
                         name=str(col), line=dict(color=PALETTE[i % len(PALETTE)]))
-    charts.append(_layout(fig, "Топ-5 разрезов в динамике"))
+    unit = " ₽" if sel in ADDITIVE else ""
+    fig.update_traces(hovertemplate="%{x}<br>%{y:,.2f}" + unit)
+    charts.append(_layout(fig, f"Топ-5 разрезов в динамике: {calc.column_label(sel)}")
+                  .update_xaxes(type="category"))
     return [json.loads(f.to_json()) for f in charts]
 
 
@@ -279,6 +317,16 @@ def table_payload(v: pd.DataFrame, cfg: dict) -> dict:
     labels = ["Период", DIM_LABELS.get(dim, dim)] + [calc.column_label(c) for c in cols[2:]]
     rows = json.loads(v[cols].head(200).to_json(orient="values"))
     return {"columns": cols, "labels": labels, "rows": rows, "total_rows": len(v)}
+
+
+def _export_frame(v: pd.DataFrame, cfg: dict) -> pd.DataFrame:
+    dim = cfg["dimension"]
+    cols = ["period_label", dim] + [c for c in v.columns
+                                    if c not in ("period", "period_label", dim)]
+    labels = ["Период", DIM_LABELS.get(dim, dim)] + [calc.column_label(c) for c in cols[2:]]
+    out = v[cols].copy()
+    out.columns = labels
+    return out
 
 
 def filter_options(sess: Session) -> dict:
@@ -380,6 +428,7 @@ def h_calc(sess: Session, it: nlu.Intent) -> dict:
         return reply(sess, "text", "Не распознал вычисление. Примеры: добавь колонку с процентом "
                                    "выполнения плана; посчитай долю; формула: fact_amount - plan_amount")
     sess.calc_history.append({"query": it.calc_query, "cols": res[2]})
+    sess.config["metric"] = res[2][0]
     return render_dashboard(sess, f"Добавлено вычисление: {res[1]}.")
 
 
@@ -460,21 +509,50 @@ def h_export(sess: Session, it: nlu.Intent) -> dict:
     stem = re.sub(r"[^\w]+", "_", sess.name or "dashboard").strip("_")
     fname = f"{stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{fmt}"
     path = os.path.join(EXPORT_DIR, fname)
+    frame = _export_frame(v, sess.config)
     if fmt == "csv":
-        v.to_csv(path, index=False, encoding="utf-8-sig")
+        frame.to_csv(path, index=False, encoding="utf-8-sig", sep=";", decimal=",")
+    elif fmt == "xlsx":
+        try:
+            from openpyxl.utils import get_column_letter
+        except ImportError:
+            return reply(sess, "text", "Для Excel-экспорта установите openpyxl: pip install openpyxl")
+        with pd.ExcelWriter(path, engine="openpyxl") as writer:
+            frame.to_excel(writer, index=False, sheet_name="Данные")
+            sheet = writer.sheets["Данные"]
+            for idx, column in enumerate(frame.columns, 1):
+                width = max(len(str(column)), frame[column].astype(str).str.len().max()) + 2
+                sheet.column_dimensions[get_column_letter(idx)].width = min(width, 60)
     else:
         parts = ["<html><head><meta charset='utf-8'>",
-                 "<script>" + get_plotlyjs() + "</script></head><body>",
+                 "<script>" + get_plotlyjs() + "</script>",
+                 "<style>body{font-family:'Segoe UI',Arial,sans-serif;background:#f1f5f9;"
+                 "color:#0f172a;margin:0;padding:24px;}"
+                 ".wrap{max-width:1100px;margin:0 auto;}"
+                 ".kpis{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0;}"
+                 ".kpi{background:#fff;border:1px solid #e2e8f0;border-radius:8px;"
+                 "padding:8px 14px;min-width:150px;}"
+                 ".kpi b{display:block;font-size:11px;color:#64748b;font-weight:400;}"
+                 ".kpi span{font-size:20px;font-weight:600;}"
+                 ".summary{background:#fff;border-left:3px solid #2563eb;padding:8px 10px;"
+                 "border-radius:4px;font-size:13px;margin:12px 0;}"
+                 ".chart-box{background:#fff;border:1px solid #e2e8f0;border-radius:8px;"
+                 "padding:6px;margin:12px 0;height:380px;}"
+                 "</style></head><body><div class='wrap'>",
                  f"<h2>{sess.name or 'Дашборд'}</h2>",
-                 "<table border='1' cellpadding='6'><tr>"]
+                 "<div class='kpis'>"]
         for kpi in compute_kpis(v, sess.config):
-            parts.append(f"<td><b>{kpi['label']}</b><br>{kpi['value']}</td>")
-        parts.append("</tr></table>")
-        parts.append(f"<p>{summarize(v, sess.config)}</p>")
+            parts.append(f"<div class='kpi'><b>{kpi['label']}</b><span>{kpi['value']}</span></div>")
+        parts.append("</div>")
+        parts.append(f"<div class='summary'>{summarize(v, sess.config)}</div>")
         for fig_json in build_charts(v, sess.config):
             fig = go.Figure(fig_json)
-            parts.append(fig.to_html(full_html=False, include_plotlyjs=False))
-        parts.append("</body></html>")
+            parts.append("<div class='chart-box'>")
+            parts.append(fig.to_html(full_html=False, include_plotlyjs=False,
+                                     config={"responsive": True, "displaylogo": False},
+                                     default_width="100%", default_height="100%"))
+            parts.append("</div>")
+        parts.append("</div></body></html>")
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(parts))
     return reply(sess, "text", f"Файл сохранен: storage/exports/{fname}", file_url=f"/files/{fname}")
@@ -519,5 +597,7 @@ def rebuild_interactive(session_id: str, controls: dict) -> dict:
         sess.config["dimension"] = toggles["dimension"]
     if toggles.get("granularity"):
         sess.config["granularity"] = toggles["granularity"]
+    if "metric" in toggles:
+        sess.config["metric"] = toggles["metric"] or None
     sess.config["filters"] = {k: v for k, v in (controls.get("filters") or {}).items() if v}
     return render_dashboard(sess, "Обновил по фильтрам.")

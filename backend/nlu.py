@@ -146,8 +146,10 @@ def parse(text: str) -> Intent:
         or re.search(r"под названием\s+([^.,!]+)", text)
     if m:
         it.dashboard_name = m.group(1).strip()
-    if "csv" in t or "excel" in t or "xlsx" in t:
+    if "csv" in t:
         it.export_format = "csv"
+    elif "excel" in t or "xlsx" in t:
+        it.export_format = "xlsx"
     elif "html" in t:
         it.export_format = "html"
     it.calc_query = text
