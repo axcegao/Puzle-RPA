@@ -31,10 +31,14 @@ CALC_LABELS = {
     "deviation_pct": "Отклонение, %",
     "completion_pct": "Выполнение плана, %",
     "mom_pct": "Динамика к пред. периоду, %",
+    "yoy_pct": "Динамика год к году, %",
     "share_pct": "Доля в периоде, %",
     "cum_amount": "Накопительный итог, ₽",
     "rank_in_period": "Ранг в периоде",
     "group_avg": "Среднее по разрезу, ₽",
+    "group_median": "Медиана по разрезу, ₽",
+    "group_min": "Минимум по разрезу, ₽",
+    "group_max": "Максимум по разрезу, ₽",
 }
 
 ALL_LABELS = {**BASE_LABELS, **CALC_LABELS}
@@ -156,15 +160,54 @@ def add_group_avg(df: pd.DataFrame, dimension: str):
     return d, "Среднее по разрезу, ₽", ["group_avg"]
 
 
+def add_group_median(df: pd.DataFrame, dimension: str):
+    d = df.copy()
+    metric = _pick_metric(d)
+    d["group_median"] = d.groupby(dimension)[metric].transform("median")
+    return d, "Медиана по разрезу, ₽", ["group_median"]
+
+
+def add_group_min(df: pd.DataFrame, dimension: str):
+    d = df.copy()
+    metric = _pick_metric(d)
+    d["group_min"] = d.groupby(dimension)[metric].transform("min")
+    return d, "Минимум по разрезу, ₽", ["group_min"]
+
+
+def add_group_max(df: pd.DataFrame, dimension: str):
+    d = df.copy()
+    metric = _pick_metric(d)
+    d["group_max"] = d.groupby(dimension)[metric].transform("max")
+    return d, "Максимум по разрезу, ₽", ["group_max"]
+
+
+def add_yoy(df: pd.DataFrame, dimension: str):
+    d = df.copy()
+    metric = _pick_metric(d)
+    prev = d[[dimension, "period", metric]].copy()
+    prev["period"] = prev["period"] + pd.DateOffset(years=1)
+    prev = prev.rename(columns={metric: "_prev_year"})
+    d = d.merge(prev, on=[dimension, "period"], how="left")
+    d["yoy_pct"] = np.where(d["_prev_year"] > 0,
+                            (d[metric] - d["_prev_year"]) / d["_prev_year"] * 100,
+                            np.nan)
+    d.drop(columns=["_prev_year"], inplace=True)
+    return d, "Динамика год к году, %", ["yoy_pct"]
+
+
 _PRESET_FUNCS = {
     "deviation_amt": add_deviation_amt,
     "deviation_pct": add_deviation_pct,
     "completion": add_completion,
     "mom": add_mom,
+    "yoy": add_yoy,
     "share": add_share,
     "cumsum": add_cumsum,
     "rank": add_rank,
     "group_avg": add_group_avg,
+    "group_median": add_group_median,
+    "group_min": add_group_min,
+    "group_max": add_group_max,
 }
 
 _BIN_OPS = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -222,6 +265,14 @@ def normalize_query(text: str) -> tuple[str, str]:
         return "deviation_amt", ""
     if "выполнени" in t:
         return "completion", ""
+    if "медиан" in t:
+        return "group_median", ""
+    if "минимум" in t or "наименьш" in t:
+        return "group_min", ""
+    if "максимум" in t or "наибольш" in t:
+        return "group_max", ""
+    if "год к году" in t or "к прошлому году" in t or "к предыдущему году" in t or "yoy" in t:
+        return "yoy", ""
     if "динамик" in t or "к прошлому" in t or "к предыдущему" in t:
         return "mom", ""
     if "доля" in t or "доли" in t or "долю" in t or "долей" in t:
