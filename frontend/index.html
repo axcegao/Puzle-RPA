@@ -34,6 +34,9 @@ header .subtitle { font-size: 12px; opacity: .85; }
 .filter-panel label { display: flex; gap: 6px; align-items: flex-start; padding: 3px 4px; font-size: 13px; cursor: pointer; }
 .filter-panel label input { flex: 0 0 14px; width: 14px; height: 14px; margin: 2px 0 0 0; }
 .filter-panel label:hover { background: #f1f5f9; }
+.select-option { display: block; width: 100%; text-align: left; padding: 6px 8px; border: none; background: none; font-size: 13px; cursor: pointer; border-radius: 4px; color: #0f172a; }
+.select-option:hover { background: #f1f5f9; }
+.select-option.selected { color: #2563eb; font-weight: 600; }
 .charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 12px; }
 .chart { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px; min-width: 0; height: 360px; overflow: hidden; }
 .bubble.dashboard { width: 100%; max-width: 1100px; }
@@ -197,6 +200,39 @@ function scheduleRebuild(host) {
   }, 300);
 }
 
+function makeSelect(options, value, onChange) {
+  const wrap = el("div", "filter");
+  const btn = el("button", "filter-btn");
+  btn.type = "button";
+  const panel = el("div", "filter-panel");
+  panel.hidden = true;
+  const list = el("div");
+  panel.appendChild(list);
+  function paint() {
+    const cur = options.find(o => o.value === value);
+    btn.textContent = cur ? cur.label : "";
+    list.innerHTML = "";
+    options.forEach(o => {
+      const item = el("button", "select-option" + (o.value === value ? " selected" : ""), o.label);
+      item.type = "button";
+      item.addEventListener("click", e => {
+        e.stopPropagation();
+        value = o.value;
+        panel.hidden = true;
+        paint();
+        onChange(o.value);
+      });
+      list.appendChild(item);
+    });
+  }
+  btn.addEventListener("click", e => { e.stopPropagation(); panel.hidden = !panel.hidden; });
+  panel.addEventListener("click", e => e.stopPropagation());
+  paint();
+  wrap.appendChild(btn);
+  wrap.appendChild(panel);
+  return wrap;
+}
+
 function renderDashboard(payload, host) {
   host.querySelectorAll(".chart").forEach(node => {
     if (window.Plotly) Plotly.purge(node);
@@ -220,46 +256,27 @@ function renderDashboard(payload, host) {
   host.appendChild(kpis);
 
   const controls = el("div", "controls");
-  const dimSelect = el("select");
   const dims = ["region_name", "outlet_name", "product_name", "category"];
   if (options.client_name) dims.push("client_name");
-  dims.forEach(d => {
-    const opt = el("option", null, DIM_LABELS[d]);
-    opt.value = d;
-    dimSelect.appendChild(opt);
-  });
-  dimSelect.value = host._state.toggles.dimension;
-  dimSelect.addEventListener("change", () => {
-    host._state.toggles.dimension = dimSelect.value;
+  const dimSelect = makeSelect(dims.map(d => ({value: d, label: DIM_LABELS[d]})),
+                               host._state.toggles.dimension, v => {
+    host._state.toggles.dimension = v;
     scheduleRebuild(host);
   });
   controls.appendChild(el("span", "ctl-label", "Разрез:"));
   controls.appendChild(dimSelect);
-  const granSelect = el("select");
-  Object.keys(GRAN_LABELS).forEach(g => {
-    const opt = el("option", null, GRAN_LABELS[g]);
-    opt.value = g;
-    granSelect.appendChild(opt);
-  });
-  granSelect.value = host._state.toggles.granularity;
-  granSelect.addEventListener("change", () => {
-    host._state.toggles.granularity = granSelect.value;
+  const granSelect = makeSelect(Object.keys(GRAN_LABELS).map(g => ({value: g, label: GRAN_LABELS[g]})),
+                                host._state.toggles.granularity, v => {
+    host._state.toggles.granularity = v;
     scheduleRebuild(host);
   });
   controls.appendChild(el("span", "ctl-label", "Период:"));
   controls.appendChild(granSelect);
-  const metricSelect = el("select");
-  metricSelect.title = "Метрика графика динамики топ-5";
   const mcols = (payload.table && payload.table.columns) || [];
   const mlabels = (payload.table && payload.table.labels) || [];
-  mcols.slice(2).forEach((c, i) => {
-    const opt = el("option", null, mlabels[i + 2] || c);
-    opt.value = c;
-    metricSelect.appendChild(opt);
-  });
-  metricSelect.value = host._state.toggles.metric || mcols[2] || "";
-  metricSelect.addEventListener("change", () => {
-    host._state.toggles.metric = metricSelect.value;
+  const metricSelect = makeSelect(mcols.slice(2).map((c, i) => ({value: c, label: mlabels[i + 2] || c})),
+                                  host._state.toggles.metric || mcols[2] || "", v => {
+    host._state.toggles.metric = v;
     scheduleRebuild(host);
   });
   controls.appendChild(el("span", "ctl-label", "Метрика:"));
